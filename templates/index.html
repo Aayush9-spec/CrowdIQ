@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CrowdIQ | Smart Venue Experience</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+    <!-- Main CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <!-- Sidebar -->
+    <aside>
+        <div class="logo">
+            <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="16" cy="16" r="14" stroke="url(#paint0_linear)" stroke-width="4"/>
+                <circle cx="16" cy="16" r="6" fill="url(#paint1_linear)"/>
+                <defs>
+                    <linearGradient id="paint0_linear" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse">
+                        <stop stop-color="#6366f1"/>
+                        <stop offset="1" stop-color="#06b6d4"/>
+                    </linearGradient>
+                    <linearGradient id="paint1_linear" x1="10" y1="10" x2="22" y2="22" gradientUnits="userSpaceOnUse">
+                        <stop stop-color="#6366f1"/>
+                        <stop offset="1" stop-color="#06b6d4"/>
+                    </linearGradient>
+                </defs>
+            </svg>
+            CrowdIQ
+        </div>
+        <ul class="nav-links">
+            <li class="nav-item active" data-tab="dashboard">
+                <span>📊</span> Dashboard
+            </li>
+            <li class="nav-item" data-tab="map">
+                <span>🗺️</span> Venue Map
+            </li>
+            <li class="nav-item" data-tab="wait-times">
+                <span>⏱️</span> Wait Times
+            </li>
+            <li class="nav-item" data-tab="assistant">
+                <span>🤖</span> AI Assistant
+            </li>
+            <li class="nav-item" data-tab="alerts">
+                <span>🔔</span> Alerts <span id="alert-count-badge" style="display:none; background:red; border-radius:10px; padding:2px 6px; font-size:10px; margin-left:auto;">0</span>
+            </li>
+        </ul>
+    </aside>
+
+    <!-- Main Content -->
+    <main>
+        <header>
+            <div class="header-left">
+                <h1 id="page-title">Venue Overview</h1>
+            </div>
+            <div class="header-right">
+                <div class="status-badge">
+                    <div class="status-dot"></div>
+                    <span id="current-phase">Pre-Match</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Dashboard Panel -->
+        <div id="dashboard" class="tab-panel active">
+            <div class="stats-grid">
+                <div class="card">
+                    <div class="card-title">Total Attendance</div>
+                    <div class="card-value" id="total-crowd">0</div>
+                    <div class="card-trend trend-up">↑ 12% in last 10m</div>
+                </div>
+                <div class="card">
+                    <div class="card-title">Average Occupancy</div>
+                    <div class="card-value" id="avg-occupancy">0%</div>
+                </div>
+                <div class="card">
+                    <div class="card-title">Wait Time (Food)</div>
+                    <div class="card-value" id="avg-wait-food">~12m</div>
+                </div>
+                <div class="card">
+                    <div class="card-title">Wait Time (Restroom)</div>
+                    <div class="card-value" id="avg-wait-rest">~4m</div>
+                </div>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 24px;">
+                <div class="card" style="height: 400px;">
+                    <div class="card-title">Attendance Trend</div>
+                    <canvas id="crowdChart"></canvas>
+                </div>
+                <div class="card" style="height: 400px;">
+                    <div class="card-title">Zone Distribution</div>
+                    <canvas id="zoneChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Map Panel -->
+        <div id="map" class="tab-panel">
+            <div class="card" style="padding: 0; height: 100%;">
+                <div id="map-container" style="height: 100%; margin: 0;"></div>
+            </div>
+        </div>
+
+        <!-- Wait Times Panel -->
+        <div id="wait-times" class="tab-panel">
+            <h2 style="margin-bottom: 24px;">Predicted Wait Times</h2>
+            <div id="wait-times-container" class="stats-grid">
+                <!-- Dynamic Content -->
+            </div>
+        </div>
+
+        <!-- AI Assistant Panel -->
+        <div id="assistant" class="tab-panel">
+            <div id="chat-panel" class="card" style="padding: 0;">
+                <div class="chat-messages" id="chat-messages">
+                    <div class="message assistant">
+                        Hello! I'm your CrowdIQ assistant. How can I help you navigate the stadium today?
+                    </div>
+                </div>
+                <div class="chat-input-area">
+                    <input type="text" id="user-input" class="chat-input" placeholder="Ask about wait times, exits, or restrooms...">
+                    <button id="send-btn" class="chat-send">Send</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Alerts Panel -->
+        <div id="alerts" class="tab-panel">
+            <h2 style="margin-bottom: 24px;">Recent Alerts</h2>
+            <div id="alerts-container">
+                <!-- Dynamic Content -->
+                <div class="message assistant" style="text-align: center; max-width: 100%;">
+                    No active alerts at this time.
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Google Maps API -->
+    <script async src="https://maps.googleapis.com/maps/api/js?key={{ config['GOOGLE_MAPS_API_KEY'] }}&libraries=visualization"></script>
+    
+    <!-- App Scripts -->
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/map.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/assistant.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/notifications.js') }}"></script>
+</body>
+</html>
