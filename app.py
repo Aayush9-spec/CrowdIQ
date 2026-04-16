@@ -1,4 +1,13 @@
+import logging
 import os
+
+# Immediate logging configuration for Cloud Run debugging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+print(">>> [CrowdIQ] Starting application boot sequence...")
+
 from flask import Flask, render_template, Response
 from flask_cors import CORS
 from flask_talisman import Talisman
@@ -15,7 +24,6 @@ from routes.api import api_bp, init_api
 from routes.assistant import assistant_bp, init_assistant
 from flask_wtf.csrf import CSRFProtect
 import google.cloud.logging
-import logging
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 # Extensions
@@ -92,16 +100,13 @@ def create_app() -> Flask:
         ],
     }
     
-    # Enable force_https only in production
-    # NOTE: Set to False temporarily to debug 503 Service Unavailable
-    is_prod = os.environ.get("FLASK_ENV") == "production"
+    # Configure Talisman (Security Headers)
+    # MINIMAL CONFIG to debug 503 errors
+    # NOTE: Disabling force_https and simplifying CSP to rule out blocked health checks
     Talisman(
         app, 
-        content_security_policy=csp, 
-        force_https=False, 
-        strict_transport_security=True,
-        session_cookie_secure=is_prod,
-        session_cookie_httponly=True
+        content_security_policy=None, 
+        force_https=False
     )
 
     # Initialize Core Components
@@ -115,6 +120,9 @@ def create_app() -> Flask:
 
     app.register_blueprint(api_bp, url_prefix="/api")
     app.register_blueprint(assistant_bp, url_prefix="/api/assistant")
+    
+    # Final startup sequence
+    print(f">>> [CrowdIQ] Initializing core services (ENV: {os.environ.get('FLASK_ENV', 'default')})...")
 
     # Start Simulation
     try:
