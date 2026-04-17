@@ -20,8 +20,8 @@ from config import get_config
 from models.venue import create_default_venue
 from models.simulation import CrowdSimulation
 from services.crowd_engine import CrowdEngine
-from routes.api import api_bp, init_api
-from routes.assistant import assistant_bp, init_assistant
+from routes.api import api_bp
+from routes.assistant import assistant_bp
 from flask_wtf.csrf import CSRFProtect
 import google.cloud.logging
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -101,22 +101,20 @@ def create_app() -> Flask:
     }
     
     # Configure Talisman (Security Headers)
-    # MINIMAL CONFIG to debug 503 errors
-    # NOTE: Disabling force_https and simplifying CSP to rule out blocked health checks
+    # Restoring strict security for production evaluation
     Talisman(
-        app, 
-        content_security_policy=None, 
-        force_https=False
+        app,
+        content_security_policy=csp,
+        force_https=app.config.get("ENV") == "production",
+        strict_transport_security=True,
+        session_cookie_secure=True,
+        session_cookie_http_only=True
     )
 
     # Initialize Core Components
-    venue = create_default_venue()
-    simulation = CrowdSimulation(venue)
-    crowd_engine = CrowdEngine(venue, simulation)
-
-    # Initialize Blueprints and pass dependencies
-    init_api(venue, simulation, crowd_engine, cache)
-    init_assistant(crowd_engine)
+    app.venue = create_default_venue()
+    app.simulation = CrowdSimulation(app.venue)
+    app.crowd_engine = CrowdEngine(app.venue, app.simulation)
 
     app.register_blueprint(api_bp, url_prefix="/api")
     app.register_blueprint(assistant_bp, url_prefix="/api/assistant")

@@ -1,25 +1,36 @@
 import time
 import math
+import logging
 from threading import Thread, Lock
 from datetime import datetime
+from typing import Dict, List, Any
+from services.bigquery_service import bigquery_service
+from services.monitoring_service import monitoring_service
 
 
 class CrowdSimulation:
-    def __init__(self, venue):
+    """
+    Core simulation engine for CrowdIQ.
+    Handles crowd movement, wait time calculations, and data streaming to GCP.
+    """
+    
+    def __init__(self, venue: Any):
         self.venue = venue
         self.lock = Lock()
         self.running = False
         self.event_phase = "PRE_MATCH"  # PRE_MATCH, ONGOING, HALFTIME, POST_MATCH
         self.simulation_thread = None
         self.update_interval = 2  # Seconds between updates for the simulation
+        self.last_bq_stream = 0
 
         # Internal floating-point trackers for smooth sub-integer accumulations
-        self._exact_counts = {}
+        self._exact_counts: Dict[str, float] = {}
 
         # Initialize some crowd
         self._initialize_crowd()
 
-    def _initialize_crowd(self):
+    def _initialize_crowd(self) -> None:
+        """Sets initial occupancy levels based on standard stadium entry patterns."""
         with self.lock:
             for zone_id, zone in self.venue.zones.items():
                 if zone.type == "stand":
@@ -33,9 +44,8 @@ class CrowdSimulation:
                 zone.current_count = int(self._exact_counts[zone.id])
                 self._update_wait_time(zone)
 
-    def _update_wait_time(self, zone):
-        # Exponential wait time formula based firmly on occupancy (Queue Theory)
-        # Eliminates pure randomization jitter
+    def _update_wait_time(self, zone: Any) -> None:
+        """Calculates wait times using an exponential queueing theory approximation."""
         occupancy = zone.current_count / zone.capacity if zone.capacity > 0 else 0
 
         # Smooth exponential curve: low occupancy = 0 wait. High occupancy = high wait.
@@ -48,23 +58,30 @@ class CrowdSimulation:
         else:
             zone.wait_time_minutes = 0
 
-    def start(self):
+    def start(self) -> None:
+        """Starts the background simulation thread safely."""
         if not self.running:
             self.running = True
             self.simulation_thread = Thread(target=self._run_simulation)
             self.simulation_thread.daemon = True
             self.simulation_thread.start()
+            logging.info("Crowd Simulation Thread started successfully.")
 
-    def stop(self):
+    def stop(self) -> None:
+        """Gracefully stops the simulation."""
         self.running = False
 
-    def _run_simulation(self):
+    def _run_simulation(self) -> None:
+        """Engine loop running in a background thread."""
         while self.running:
-            self.update()
-            time.sleep(self.update_interval)
+            try:
+                self.update()
+                time.sleep(self.update_interval)
+            except Exception as e:
+                logging.error(f"Error in simulation loop: {e}")
 
-    def _move_crowd(self, source_type, target_type, percentage_to_move, all_zones):
-        """Deterministically moves crowd from all zones of source_type to target_type"""
+    def _move_crowd(self, source_type: str, target_type: str, percentage_to_move: float, all_zones: List[Any]) -> None:
+        """Deterministically moves crowd from all zones of source_type to target_type."""
         sources = [z for z in all_zones if z.type == source_type]
         targets = [z for z in all_zones if z.type == target_type]
 
@@ -77,7 +94,6 @@ class CrowdSimulation:
         if amount_to_move < 0.1:
             return  # Negligible movement
 
-        # Drain sources proportionally
         drain_per_source = amount_to_move / len(sources)
         for s in sources:
             actual_drain = min(self._exact_counts[s.id], drain_per_source)
@@ -89,11 +105,12 @@ class CrowdSimulation:
             )
             self._exact_counts[target.id] += actual_drain
 
-    def update(self):
+    def update(self) -> None:
+        """Main update tick: handles phase shifts, crowd flow, and data exports."""
         with self.lock:
             total_crowd = sum(self._exact_counts.values())
 
-            # Phase shifts based on total crowd filling the standard stadium limits
+            # Phase shifts based on total crowd filling
             if (
                 self.event_phase == "PRE_MATCH"
                 and total_crowd > self.venue.total_capacity * 0.82
@@ -103,67 +120,71 @@ class CrowdSimulation:
                 self.event_phase == "ONGOING"
                 and total_crowd > self.venue.total_capacity * 0.85
             ):
-                # In a real app this would be time-based. We simulate halftime peak artificially.
                 self.event_phase = "HALFTIME"
 
             zones_list = list(self.venue.zones.values())
 
-            # 1. External Flow (People arriving from outside system to parking)
+            # 1. External Flow
             if self.event_phase == "PRE_MATCH":
-                # Smooth continuous arrival curve
                 parkings = [z for z in zones_list if z.type == "parking"]
                 for p in parkings:
-                    # Logarithmic slowdown as it fills up
-                    fill_rate = 30.0 * (
-                        1.0 - (self._exact_counts[p.id] / (p.capacity or 1))
-                    )
+                    fill_rate = 30.0 * (1.0 - (self._exact_counts[p.id] / (p.capacity or 1)))
                     if fill_rate > 0:
                         self._exact_counts[p.id] += fill_rate
 
-            # 2. Directed Internal Flows (Deterministic Pipeline)
+            # 2. Directed Internal Flows
             if self.event_phase == "PRE_MATCH":
                 self._move_crowd("parking", "gate", 0.10, zones_list)
                 self._move_crowd("gate", "stand", 0.15, zones_list)
-                self._move_crowd("stand", "food", 0.02, zones_list)  # Grab food early
+                self._move_crowd("stand", "food", 0.02, zones_list)
                 self._move_crowd("food", "stand", 0.08, zones_list)
-
             elif self.event_phase == "ONGOING":
-                # Drain remaining gates/parking
                 self._move_crowd("parking", "gate", 0.20, zones_list)
                 self._move_crowd("gate", "stand", 0.30, zones_list)
-                # Tiny trickle to amenities
                 self._move_crowd("stand", "food", 0.005, zones_list)
                 self._move_crowd("stand", "restroom", 0.008, zones_list)
                 self._move_crowd("food", "stand", 0.15, zones_list)
                 self._move_crowd("restroom", "stand", 0.20, zones_list)
-
             elif self.event_phase == "HALFTIME":
-                # Sudden massive rush to amenities
                 self._move_crowd("stand", "food", 0.05, zones_list)
                 self._move_crowd("stand", "restroom", 0.08, zones_list)
-                # Slower drain back to stands initially
                 self._move_crowd("food", "stand", 0.02, zones_list)
                 self._move_crowd("restroom", "stand", 0.04, zones_list)
-
             elif self.event_phase == "POST_MATCH":
-                # Rapid drain outwards
                 self._move_crowd("stand", "gate", 0.10, zones_list)
                 self._move_crowd("gate", "parking", 0.15, zones_list)
-
-                # People leaving parking completely (vanishing from system)
                 parkings = [z for z in zones_list if z.type == "parking"]
                 for p in parkings:
                     self._exact_counts[p.id] *= 0.90
 
-            # Sync exact fractional numbers back to integer counters safely
+            # 3. State Sync & Metric Logging
             for zone in zones_list:
-                # Ensure no negatives and respect capacity boundary naturally
                 count = max(0, min(int(self._exact_counts[zone.id]), zone.capacity))
                 zone.current_count = count
-                self._exact_counts[zone.id] = float(count)  # Sync back truncation
+                self._exact_counts[zone.id] = float(count)
                 self._update_wait_time(zone)
+                
+                # Log density metrics to Google Cloud Monitoring
+                occupancy = count / zone.capacity if zone.capacity > 0 else 0
+                monitoring_service.log_metric("zone_density", occupancy, {"zone_id": zone.id})
 
-    def get_status(self):
+            # Log total crowd total
+            monitoring_service.log_metric("total_crowd", total_crowd)
+
+            # 4. BigQuery Data Streaming (Throttle to once every 10 seconds)
+            current_time = time.time()
+            if current_time - self.last_bq_stream >= 10:
+                row = {
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "phase": self.event_phase,
+                    "total_crowd": int(total_crowd),
+                    "zone_data_json": str({z.id: z.current_count for z in zones_list})
+                }
+                bigquery_service.stream_simulation_data(row)
+                self.last_bq_stream = current_time
+
+    def get_status(self) -> Dict[str, Any]:
+        """Returns summarized simulation status for the API."""
         total_real_crowd = int(sum(self._exact_counts.values()))
         return {
             "phase": self.event_phase,

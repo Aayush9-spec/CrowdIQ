@@ -1,37 +1,26 @@
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, current_app
 from typing import Any
 from services.notification import notification_service
+from models.schemas import PhaseUpdateRequest
+from pydantic import ValidationError
 
 api_bp = Blueprint("api", __name__)
-
-# These will be initialized in app.py
-venue: Any = None
-simulation: Any = None
-crowd_engine: Any = None
-cache: Any = None
-
-
-def init_api(v: Any, s: Any, e: Any, c: Any) -> None:
-    """Initialize API blueprint with core application dependencies."""
-    global venue, simulation, crowd_engine, cache
-    venue = v
-    simulation = s
-    crowd_engine = e
-    cache = c
 
 
 @api_bp.route("/venue", methods=["GET"])
 def get_venue() -> Any:
     """Retrieves static venue configuration data."""
+    # Note: Global cache access via app instance for cleaner code
+    cache = getattr(current_app, "cache", None)
     if cache:
         cached_venue = cache.get("venue_data")
         if cached_venue:
             return jsonify(cached_venue)
 
     data = {
-        "name": venue.name,
-        "total_capacity": venue.total_capacity,
-        "zones": venue.get_all_zones(),
+        "name": current_app.venue.name,
+        "total_capacity": current_app.venue.total_capacity,
+        "zones": current_app.venue.get_all_zones(),
     }
     if cache:
         cache.set("venue_data", data, timeout=3600)  # Cache for 1 hour
@@ -41,26 +30,25 @@ def get_venue() -> Any:
 @api_bp.route("/status", methods=["GET"])
 def get_status() -> Any:
     """Retrieves real-time simulation status and overall crowd volume."""
-    return jsonify(simulation.get_status())
+    return jsonify(current_app.simulation.get_status())
 
 
 @api_bp.route("/analytics", methods=["GET"])
 def get_analytics() -> Any:
     """Retrieves detailed crowd analytics across all zones."""
-    return jsonify(crowd_engine.get_crowd_analytics())
+    return jsonify(current_app.crowd_engine.get_crowd_analytics())
 
 
 @api_bp.route("/wait-times", methods=["GET"])
 def get_wait_times() -> Any:
     """Retrieves calculated wait time predictions."""
-    return jsonify(crowd_engine.get_wait_time_predictions())
+    return jsonify(current_app.crowd_engine.get_wait_time_predictions())
 
 
 @api_bp.route("/alerts", methods=["GET"])
 def get_alerts() -> Any:
     """Retrieves active security and structural alerts."""
-    # Update alerts based on current state before returning
-    notification_service.update_alerts(venue, simulation.get_status())
+    notification_service.update_alerts(current_app.venue, current_app.simulation.get_status())
     return jsonify(notification_service.get_alerts())
 
 
@@ -72,12 +60,19 @@ def health_check() -> Any:
 
 @api_bp.route("/simulation/phase", methods=["POST"])
 def set_phase() -> Any:
-    """Manually sets the current event phase for demonstration purposes."""
-    new_phase = request.json.get("phase")
-    if new_phase in ["PRE_MATCH", "ONGOING", "HALFTIME", "POST_MATCH"]:
-        simulation.event_phase = new_phase
+    """Manually sets the current event phase with strict Pydantic validation."""
+    try:
+        # Validate request body
+        phase_req = PhaseUpdateRequest(**request.get_json())
+        current_app.simulation.event_phase = phase_req.phase
+        
         # Clear venue cache to force update with new phase data
+        cache = getattr(current_app, "cache", None)
         if cache:
             cache.delete("venue_data")
-        return jsonify({"status": "success", "new_phase": new_phase})
-    return jsonify({"error": "Invalid phase"}), 400
+            
+        return jsonify({"status": "success", "new_phase": phase_req.phase})
+    except ValidationError as e:
+        return jsonify({"error": "Invalid input data", "details": e.errors()}), 422
+    except Exception as e:
+        return jsonify({"error": "Internal server error"}), 500

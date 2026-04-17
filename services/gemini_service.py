@@ -52,15 +52,36 @@ class GeminiService:
             return response.text
         except Exception as e:
             # Crucial: Log the exact error so it appears in Cloud Run logs
-            print(f"CRITICAL: Gemini API Call Failed: {type(e).__name__} - {str(e)}")
-            
-            error_msg = "I'm having trouble connecting to my brain right now."
-            if "403" in str(e) or "API_KEY_INVALID" in str(e):
-                error_msg += " It looks like my API Key is invalid or not set correctly in the Cloud settings."
-            elif "429" in str(e):
-                error_msg += " I'm receiving too many requests. Please try again in 30 seconds."
-            
-            return f"{error_msg} Please check the dashboard for live updates!"
+            logging.error(f"CRITICAL: Gemini API Call Failed: {type(e).__name__} - {str(e)}")
+            return "I'm having trouble connecting to my brain right now. Please check the dashboard for live updates!"
+
+    def get_management_recommendations(self, venue_state):
+        """Generates strategic management recommendations based on real-time crowd data."""
+        if not self.client:
+            return "Management logic offline. Please monitor dashboard manually."
+
+        prompt = f"""
+        Analyze the current stadium state and provide 3 high-priority strategic management recommendations for the operations team.
+        Focus on: Crowd safety, wait time reduction, and staff allocation.
+        
+        State:
+        - Phase: {venue_state.get('phase')}
+        - Total Crowd: {venue_state.get('total_crowd')}
+        - Zones: {venue_state.get('zones_summary')}
+        
+        Output format: Concise bullet points.
+        """
+
+        try:
+            response = self.client.models.generate_content(
+                model="gemini-2.0-flash",
+                config={"temperature": 0.4},
+                contents=[prompt],
+            )
+            return response.text
+        except Exception as e:
+            logging.error(f"Error generating management recommendations: {e}")
+            return "Unable to generate AI recommendations at this time."
 
 
 # Singleton instance

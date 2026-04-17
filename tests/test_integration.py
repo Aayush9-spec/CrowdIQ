@@ -25,7 +25,7 @@ def test_simulation_workflow(client):
     res3 = client.get("/api/status")
     assert res3.json["phase"] == new_phase
 
-def test_assistant_integration(client, mocker):
+def test_assistant_integration(client):
     """Test assistant chat flow with mocked Gemini."""
     # Mock the gemini_service.get_ai_response
     # (Assuming we have pytest-mock installed, if not we use unittest.mock)
